@@ -1,0 +1,75 @@
+# Tự quét báo cáo CTCK 5 lần/ngày trên máy chủ GitHub (không cần máy tính ở nhà)
+name: Tu quet bao cao
+
+on:
+  schedule:
+    # Giờ UTC = giờ Việt Nam - 7  ->  08:17, 11:17, 13:47, 15:47, 20:17 giờ VN (5 lần/ngày)
+    - cron: "17 1 * * *"
+    - cron: "17 4 * * *"
+    - cron: "47 6 * * *"
+    - cron: "47 8 * * *"
+    - cron: "17 13 * * *"
+  workflow_dispatch:        # nút "Run workflow" để quét ngay (bấm được trên điện thoại)
+  push:                     # vừa đưa code mới lên là tự quét 1 lần
+    paths:
+      - "bao_cao_ctck.py"
+      - ".github/workflows/tu_quet.yml"
+
+permissions:
+  contents: write           # cho phép ghi index.html + reports.json vào kho
+
+concurrency:
+  group: tu-quet
+  cancel-in-progress: false
+
+jobs:
+  quet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      TZ: Asia/Ho_Chi_Minh   # ngày giờ theo giờ Việt Nam
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Cai thu vien (tu thu lai 3 lan neu mang loi)
+        run: |
+          for i in 1 2 3; do
+            pip install -r requirements.txt && python -m playwright install --with-deps chromium && break
+            echo "Loi cai dat, thu lai lan $((i+1))..."; sleep 30
+          done
+
+      - name: Cau hinh git
+        run: |
+          git config user.name  "tu-quet-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Quet va dua len mang (loi thi doi 2 phut quet lai)
+        timeout-minutes: 100
+        run: |
+          python bao_cao_ctck.py --no-open || { echo "Lan 1 loi - doi 2 phut quet lai"; sleep 120; python bao_cao_ctck.py --no-open; }
+
+      - name: Giu lich luon song + ghi trang thai (chay ca khi quet loi)
+        if: always()
+        run: |
+          echo "{\"lan_chay\": \"$(date '+%H:%M %d/%m/%Y')\", \"ket_qua\": \"${{ job.status }}\"}" > trang_thai.json
+          git add trang_thai.json
+          T=$(git write-tree)
+          C=$(git commit-tree "$T" -m "Trang thai $(date '+%H:%M %d/%m/%Y'): ${{ job.status }}")
+          for i in 1 2 3; do git push --force origin "$C:refs/heads/${GITHUB_REF_NAME}" && break; sleep 10; done
+
+      - name: Luu nhat ky (xem khi loi)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nhat-ky
+          path: |
+            nhat_ky.txt
+            debug/*_lay_duoc.txt
+          retention-days: 7
+          if-no-files-found: ignore
